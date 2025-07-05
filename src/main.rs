@@ -5,7 +5,9 @@ mod command;
 use command::Command;
 use std::sync::Arc;
 mod store;
+mod persistence;
 use store::KeyValueStore;
+
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,11 +15,20 @@ async fn main() -> anyhow::Result<()> {
     println!("Server listening in port 6379");
 
     let store = Arc::new(KeyValueStore::new());
+    store.load("data.json").await?;
+
+    let store_clone = store.clone();
+        
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        store_clone.save("data.json").await.unwrap();
+        std::process::exit(0);
+    });
 
     loop {
         let (socket, addr) = listener.accept().await?;
         let store = store.clone();
-        
+
         tokio::spawn(async move {
             if let Err(e) = handle_client(socket, store).await {
                 eprintln!("Error handling client {}: {:?}", addr, e);    
@@ -56,10 +67,10 @@ async fn handle_client(socket: tokio::net::TcpStream, store: Arc<KeyValueStore>)
                 "OK".to_string()
             }
             Command::Delete(key) => {
-                if store.delete(&key).await {
-                    "OK".to_string()
-                } else {
-                    "Error key not found".to_string()
+                match store.delete(&key).await {
+                    Ok(true) => "Ok".to_string(),
+                    Ok(false) => "Key not found".to_string(),
+                    Err(e) => "Error occuered".to_string()
                 }
             }
             Command::Unknown => "Error Unknown Command".to_string()
